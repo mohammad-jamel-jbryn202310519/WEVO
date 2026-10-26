@@ -1,14 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
+  /* Clean standard Next.js config compatible with Vercel and Hostinger */
+  reactStrictMode: true,
 };
 
 export default nextConfig;
