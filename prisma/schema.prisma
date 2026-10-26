@@ -1,0 +1,335 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  PLATFORM_ADMIN
+  COMPANY_OWNER
+  COMPANY_ADMIN
+  SUPERVISOR
+  EMPLOYEE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  EARLY_LEAVE
+  ABSENT
+  EXCUSED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  UNPAID
+  EMERGENCY
+  PATERNITY_MATERNITY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  REVIEWED
+  APPROVED
+  PUBLISHED
+}
+
+enum IncentiveType {
+  PERFORMANCE_BONUS
+  EMPLOYEE_OF_THE_MONTH
+  OVERTIME_EXTRA
+  SPECIAL_ACHIEVEMENT
+  PEER_RECOGNITION
+}
+
+enum ReportCategory {
+  SUGGESTION
+  WORKPLACE_ISSUE
+  PROCESS_IMPROVEMENT
+  SAFETY_OR_FACILITY
+}
+
+enum ReportStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+model User {
+  id              String       @id @default(uuid())
+  email           String       @unique
+  passwordHash    String?
+  fullName        String
+  phone           String?
+  avatarUrl       String?
+  isPlatformAdmin Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  memberships     Membership[]
+
+  @@map("users")
+}
+
+model Company {
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  logoUrl       String?
+  currency      String         @default("SAR")
+  timezone      String         @default("Asia/Riyadh")
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  memberships   Membership[]
+  branches      Branch[]
+  shifts        Shift[]
+  announcements Announcement[]
+  auditLogs     AuditLog[]
+
+  @@map("companies")
+}
+
+model Membership {
+  id             String          @id @default(uuid())
+  userId         String
+  companyId      String
+  branchId       String?
+  role           Role            @default(EMPLOYEE)
+  jobTitle       String?
+  department     String?
+  employeeCode   String?
+  baseSalary     Decimal         @default(0.00) @db.Decimal(12, 2)
+  joinedAt       DateTime        @default(now())
+  isActive       Boolean         @default(true)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  shiftAssignments ShiftAssignment[]
+  attendances      Attendance[]
+  leaveRequests    LeaveRequest[]
+  payrollRecords   PayrollRecord[]
+  incentives       Incentive[]
+  reports          Report[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]      @relation("ActorAuditLogs")
+
+  @@unique([userId, companyId])
+  @@index([companyId, role])
+  @@map("memberships")
+}
+
+model Branch {
+  id            String       @id @default(uuid())
+  companyId     String
+  name          String
+  address       String?
+  latitude      Float
+  longitude     Float
+  radiusMeters  Float        @default(150.0)
+  isActive      Boolean      @default(true)
+
+  company       Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  memberships   Membership[]
+  attendances   Attendance[]
+
+  @@index([companyId])
+  @@map("branches")
+}
+
+model Shift {
+  id                 String            @id @default(uuid())
+  companyId          String
+  name               String
+  startTime          String            // e.g. "09:00"
+  endTime            String            // e.g. "17:00"
+  gracePeriodMinutes Int               @default(15)
+
+  company            Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignments        ShiftAssignment[]
+
+  @@index([companyId])
+  @@map("shifts")
+}
+
+model ShiftAssignment {
+  id           String     @id @default(uuid())
+  membershipId String
+  shiftId      String
+  date         DateTime   @db.Date
+  notes        String?
+
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  shift        Shift      @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, date])
+  @@map("shift_assignments")
+}
+
+model Attendance {
+  id                   String           @id @default(uuid())
+  membershipId         String
+  branchId             String?
+  checkInTime          DateTime         @default(now())
+  checkOutTime         DateTime?
+  checkInLat           Float?
+  checkInLng           Float?
+  checkInDistanceMeters Float?
+  checkOutLat          Float?
+  checkOutLng          Float?
+  status               AttendanceStatus @default(PRESENT)
+  workDurationMinutes  Int?
+  overtimeMinutes      Int              @default(0)
+  isManualCorrection   Boolean          @default(false)
+  notes                String?
+
+  membership           Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  branch               Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([membershipId, checkInTime])
+  @@map("attendances")
+}
+
+model LeaveRequest {
+  id           String      @id @default(uuid())
+  membershipId String
+  type         LeaveType
+  startDate    DateTime    @db.Date
+  endDate      DateTime    @db.Date
+  daysCount    Int
+  reason       String?
+  status       LeaveStatus @default(PENDING)
+  reviewerNote String?
+  reviewedAt   DateTime?
+
+  membership   Membership  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([membershipId, status])
+  @@map("leave_requests")
+}
+
+model PayrollRecord {
+  id              String        @id @default(uuid())
+  membershipId    String
+  month           Int
+  year            Int
+  basicSalary     Decimal       @db.Decimal(12, 2)
+  overtimeAmount  Decimal       @default(0.00) @db.Decimal(12, 2)
+  incentivesTotal Decimal       @default(0.00) @db.Decimal(12, 2)
+  deductionsTotal Decimal       @default(0.00) @db.Decimal(12, 2)
+  netSalary       Decimal       @db.Decimal(12, 2)
+  status          PayrollStatus @default(DRAFT)
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  membership      Membership    @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, month, year])
+  @@map("payroll_records")
+}
+
+model Incentive {
+  id           String        @id @default(uuid())
+  membershipId String
+  title        String
+  amount       Decimal       @db.Decimal(12, 2)
+  type         IncentiveType @default(PERFORMANCE_BONUS)
+  notes        String?
+  date         DateTime      @default(now())
+
+  membership   Membership    @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([membershipId])
+  @@map("incentives")
+}
+
+model Report {
+  id           String           @id @default(uuid())
+  membershipId String
+  title        String
+  content      String
+  category     ReportCategory
+  status       ReportStatus     @default(SUBMITTED)
+  isAnonymous  Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  membership   Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  attachments  ReportAttachment[]
+
+  @@index([membershipId, category])
+  @@map("reports")
+}
+
+model ReportAttachment {
+  id       String @id @default(uuid())
+  reportId String
+  fileUrl  String
+  fileType String
+
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("report_attachments")
+}
+
+model Announcement {
+  id          String   @id @default(uuid())
+  companyId   String
+  title       String
+  content     String
+  priority    String   @default("NORMAL")
+  publishedAt DateTime @default(now())
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("announcements")
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  membershipId String
+  title        String
+  message      String
+  isRead       Boolean  @default(false)
+  link         String?
+  createdAt    DateTime @default(now())
+
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([membershipId, isRead])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id                 String      @id @default(uuid())
+  companyId          String
+  actorMembershipId  String?
+  action             String
+  targetEntity       String
+  targetId           String?
+  diff               Json?
+  createdAt          DateTime    @default(now())
+
+  company            Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actorMembership    Membership? @relation("ActorAuditLogs", fields: [actorMembershipId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, targetEntity])
+  @@map("audit_logs")
+}
